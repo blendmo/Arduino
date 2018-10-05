@@ -36,17 +36,20 @@ Adafruit_7segment matrix = Adafruit_7segment();
 // Stepper Motor instance
 const unsigned int stepsPerRevolution = 200;  
 Stepper myStepper(stepsPerRevolution, 8, 10, 9, 11);
-const unsigned int motorRevSteps = stepsPerRevolution * 2;
+  const unsigned int motorRevSteps = stepsPerRevolution * 4;
 
 // matrix index
 int matrixIndex = 0;
 bool isLocked = false;
 unsigned char numberList[4];
 unsigned char lockedList[4];
-const unsigned int eepromAddr = 0;
+const unsigned int eepromLockAddr = 0;
+const unsigned int eepromDataAddr = 1;
 const unsigned int delayTime = 10; // ms
 const unsigned int dispTimeout = 1000; // 10 sec
+const unsigned int motorSwitchPin = 7;
 unsigned int tickCounter = 0;
+const unsigned int motorDelay = 100;
 
 enum LockState
 {
@@ -78,6 +81,9 @@ void writeToSevenSeg(int index, int number)
   matrix.writeDisplay();
 }
 
+// ***************************************************************************************** 
+// Clear the seven segment display
+// ***************************************************************************************** 
 void clearDisplay()
 {
   // write nothing to display
@@ -85,18 +91,27 @@ void clearDisplay()
   matrix.writeDisplay();
 }
 
+// ***************************************************************************************** 
+// Sound played when a key is pressed
+// ***************************************************************************************** 
 void playKeySound()
 {
   // play sound when key is pressed
   tone(3, 2000, 50);
 }
 
+// ***************************************************************************************** 
+// Sound played when a number entry is incorrect
+// ***************************************************************************************** 
 void playErrorSound()
 {
   // play sound when key is pressed
   tone(3, 500, 100);
 }
 
+// ***************************************************************************************** 
+// Sound played when a number entry is correct
+// ***************************************************************************************** 
 void playGoodSound()
 {
   // play sound when key is pressed
@@ -121,7 +136,7 @@ void setup()
   clearDisplay();
 
   // get data from NVM (in case power was removed while it was locked"
-  isLocked = (EEPROM.read(eepromAddr) == 1);
+  isLocked = (EEPROM.read(eepromLockAddr) == 1);
 
   if (isLocked)
   {
@@ -130,13 +145,16 @@ void setup()
     
     for (int i = 0; i < 4; ++i)
     {
-      lockedList[i] = EEPROM.read(eepromAddr + i);
+      lockedList[i] = EEPROM.read(eepromDataAddr + i);
       Serial.println(lockedList[i]);
     }
   }
 
   // finish stepper initialization
-  myStepper.setSpeed(60);
+  pinMode(motorSwitchPin, OUTPUT);
+  myStepper.setSpeed(120);
+  myStepper.step(0);   
+  digitalWrite(motorSwitchPin, HIGH);  // disable motor power
 
   // report start
   Serial.println("Start Digital Safe");
@@ -160,7 +178,9 @@ void loop()
     switch(state)
     {
     case LS_IDLE:
-      clearDisplay();
+      clearDisplay();  // clear seven seg display
+      myStepper.step(0);   // stop current to the motor
+      
       if (key == '#' || key == '*') 
       {
         state = LS_RESET;  
@@ -237,11 +257,18 @@ void loop()
             playGoodSound();
 
             // disgenage the locking bolt
-            myStepper.step(motorRevSteps);
+            digitalWrite(motorSwitchPin, LOW);
+            delay(motorDelay);
+            myStepper.step(-motorRevSteps);
+            delay(motorDelay);
+            digitalWrite(motorSwitchPin, HIGH);
                        
             clearDisplay();
             state = LS_IDLE;
             isLocked = false;
+
+            // store in eeprom
+            EEPROM.write(eepromLockAddr, 0);        
           }
           else
           {
@@ -269,14 +296,18 @@ void loop()
 
         // save the locked state in NVM
         memcpy(lockedList, numberList, 4);
-        EEPROM.write(eepromAddr, 1);
+        EEPROM.write(eepromLockAddr, 1);
         for (int i = 0; i < 4; ++i)
         {
-          EEPROM.write(eepromAddr + i, lockedList[i]);
+          EEPROM.write(eepromDataAddr + i, lockedList[i]);
         }
 
         // lock the hatch
-        myStepper.step(-motorRevSteps);     
+        digitalWrite(motorSwitchPin, LOW);
+        delay(motorDelay);
+        myStepper.step(motorRevSteps);  
+        delay(motorDelay);
+        digitalWrite(motorSwitchPin, HIGH);
 
         clearDisplay();
         state = LS_IDLE;
